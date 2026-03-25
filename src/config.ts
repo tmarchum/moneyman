@@ -24,12 +24,35 @@ logger("Parsing config");
 const config: MoneymanConfig = createConfig();
 export { config };
 
+function applyEnvVarOverrides(parsedConfig: Record<string, unknown>) {
+  const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID } = process.env;
+  if (TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID) {
+    const options = (parsedConfig.options as Record<string, unknown>) ?? {};
+    const notifications =
+      (options.notifications as Record<string, unknown>) ?? {};
+    if (!notifications.telegram) {
+      logger(
+        "Using TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID env vars for Telegram config",
+      );
+      notifications.telegram = {
+        apiKey: TELEGRAM_BOT_TOKEN,
+        chatId: TELEGRAM_CHAT_ID,
+      };
+      options.notifications = notifications;
+      parsedConfig.options = options;
+    }
+  }
+  return parsedConfig;
+}
+
 function createConfig() {
   const { MONEYMAN_CONFIG, MONEYMAN_CONFIG_PATH } = process.env;
   if (MONEYMAN_CONFIG) {
     logger("Using MONEYMAN_CONFIG");
     try {
-      const parsedConfig = parseJsoncConfig(MONEYMAN_CONFIG);
+      const parsedConfig = applyEnvVarOverrides(
+        parseJsoncConfig(MONEYMAN_CONFIG),
+      );
       return MoneymanConfigSchema.parse(parsedConfig);
     } catch (error) {
       logger(
@@ -44,7 +67,9 @@ function createConfig() {
     logger(`Using MONEYMAN_CONFIG_PATH: ${MONEYMAN_CONFIG_PATH}`);
     try {
       const configFileContent = readFileSync(MONEYMAN_CONFIG_PATH, "utf-8");
-      const parsedConfig = parseJsoncConfig(configFileContent);
+      const parsedConfig = applyEnvVarOverrides(
+        parseJsoncConfig(configFileContent),
+      );
       return MoneymanConfigSchema.parse(parsedConfig);
     } catch (error) {
       logger(

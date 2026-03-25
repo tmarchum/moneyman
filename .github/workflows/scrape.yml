@@ -41,9 +41,13 @@ jobs:
           -e DEBUG
           -e TZ
           -e SEND_NEW_CONFIG_TO_TG
+          -e TELEGRAM_BOT_TOKEN
+          -e TELEGRAM_CHAT_ID
           ${{ steps.set-container-image.outputs.image }}
         env:
           MONEYMAN_CONFIG: ${{ secrets.MONEYMAN_CONFIG }}
           DEBUG: ${{ github.event.inputs.DEBUG || '' }}
           TZ: "Asia/Jerusalem"
           SEND_NEW_CONFIG_TO_TG: ${{ github.event.inputs.sendNewConfigToTg }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
