@@ -47,6 +47,7 @@ jobs:
           -e GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY
           -e GOOGLE_SHEET_ID
           -e GOOGLE_WORKSHEET_NAME
+          -e MONEYMAN_UNSAFE_STDOUT=true
           ${{ steps.set-container-image.outputs.image }}
         env:
           MONEYMAN_CONFIG: ${{ secrets.MONEYMAN_CONFIG }}
