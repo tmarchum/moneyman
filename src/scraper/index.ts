@@ -12,6 +12,7 @@ const logger = createLogger("scraper");
 
 export const scraperOptions: Partial<ScraperOptions> = {
   navigationRetryCount: 3,
+  timeout: 60000,
   viewportSize: { width: 1920, height: 1080 },
   optInFeatures: [
     "mizrahi:pendingIfHasGenericDescription",
