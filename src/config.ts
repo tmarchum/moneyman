@@ -42,6 +42,32 @@ function applyEnvVarOverrides(parsedConfig: Record<string, unknown>) {
       parsedConfig.options = options;
     }
   }
+
+  const {
+    GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
+    GOOGLE_SHEET_ID,
+    GOOGLE_WORKSHEET_NAME,
+  } = process.env;
+  if (
+    GOOGLE_SERVICE_ACCOUNT_EMAIL &&
+    GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY &&
+    GOOGLE_SHEET_ID &&
+    GOOGLE_WORKSHEET_NAME
+  ) {
+    const storage = (parsedConfig.storage as Record<string, unknown>) ?? {};
+    if (!storage.googleSheets) {
+      logger("Using GOOGLE_* env vars for Google Sheets config");
+      storage.googleSheets = {
+        serviceAccountEmail: GOOGLE_SERVICE_ACCOUNT_EMAIL,
+        serviceAccountPrivateKey: GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
+        sheetId: GOOGLE_SHEET_ID,
+        worksheetName: GOOGLE_WORKSHEET_NAME,
+      };
+      parsedConfig.storage = storage;
+    }
+  }
+
   return parsedConfig;
 }
 
