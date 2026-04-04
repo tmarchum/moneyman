@@ -15,20 +15,23 @@ jobs:
       - name: Pull container image
         run: docker pull ghcr.io/daniel-hauser/moneyman:latest
 
-      - name: Run scraper with merged googleSheets config
+      - name: Diagnose private key
+        env:
+          GSK: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY }}
+          GSE: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
+          GSI: ${{ secrets.GOOGLE_SHEET_ID }}
+          GSW: ${{ secrets.GOOGLE_WORKSHEET_NAME }}
         run: |
-          MERGED_CONFIG=$(echo "$MONEYMAN_CONFIG_ORIG" | jq \
-            --arg email "$GSE" \
-            --arg key "$GSK" \
-            --arg sheet "$GSI" \
-            --arg ws "$GSW" \
-            '(.storage //= {}) | .storage.googleSheets = {serviceAccountEmail: $email, serviceAccountPrivateKey: $key, sheetId: $sheet, worksheetName: $ws} | del(.storage.localJson)')
-          docker run --rm \
-            -e MONEYMAN_CONFIG="$MERGED_CONFIG" \
-            -e DEBUG \
-            -e TZ \
-            -e MONEYMAN_UNSAFE_STDOUT \
-            ghcr.io/daniel-hauser/moneyman:latest
+          echo "email prefix: ${GSE:0:6}"
+          echo "email domain: ${GSE##*@}"
+          echo "sheet id set: ${#GSI} chars"
+          echo "worksheet: $GSW"
+          echo "key length: ${#GSK} chars"
+          echo "key starts with BEGIN: $(echo "$GSK" | head -c 30)"
+          echo "key contains literal backslash-n: $(echo "$GSK" | grep -c '\\n' || true)"
+          echo "key contains real newlines: $(printf '%s' "$GSK" | wc -l)"
+
+      - name: Run scraper with merged googleSheets config
         env:
           MONEYMAN_CONFIG_ORIG: ${{ secrets.MONEYMAN_CONFIG }}
           GSE: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
@@ -38,3 +41,18 @@ jobs:
           DEBUG: ${{ github.event.inputs.DEBUG || 'moneyman:*' }}
           TZ: "Asia/Jerusalem"
           MONEYMAN_UNSAFE_STDOUT: "true"
+        run: |
+          # Fix \n if key was stored with escaped newlines
+          GSK_FIXED=$(printf '%s' "$GSK" | sed 's/\\n/\n/g')
+          MERGED_CONFIG=$(echo "$MONEYMAN_CONFIG_ORIG" | jq \
+            --arg email "$GSE" \
+            --arg key "$GSK_FIXED" \
+            --arg sheet "$GSI" \
+            --arg ws "$GSW" \
+            '(.storage //= {}) | .storage.googleSheets = {serviceAccountEmail: $email, serviceAccountPrivateKey: $key, sheetId: $sheet, worksheetName: $ws} | del(.storage.localJson)')
+          docker run --rm \
+            -e MONEYMAN_CONFIG="$MERGED_CONFIG" \
+            -e DEBUG \
+            -e TZ \
+            -e MONEYMAN_UNSAFE_STDOUT \
+            ghcr.io/daniel-hauser/moneyman:latest
