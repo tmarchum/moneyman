@@ -8,6 +8,7 @@ on:
         default: "moneyman:*"
   schedule:
     - cron: "5 10,22 * * *"
+
 jobs:
   scrape:
     runs-on: ubuntu-latest
@@ -15,7 +16,10 @@ jobs:
       - name: Pull container image
         run: docker pull ghcr.io/daniel-hauser/moneyman:latest
 
-      - name: Run scraper with merged googleSheets config
+      - name: Prepare output directory
+        run: mkdir -p ${{ github.workspace }}/output && chmod 777 ${{ github.workspace }}/output
+
+      - name: Run scraper with localJson + googleSheets
         env:
           MONEYMAN_CONFIG_ORIG: ${{ secrets.MONEYMAN_CONFIG }}
           GSE: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
@@ -32,10 +36,23 @@ jobs:
             --arg key "$GSK_FIXED" \
             --arg sheet "$GSI" \
             --arg ws "$GSW" \
-            '(.storage //= {}) | .storage.googleSheets = {serviceAccountEmail: $email, serviceAccountPrivateKey: $key, sheetId: $sheet, worksheetName: $ws} | del(.storage.localJson) | (.options //= {}) | (.options.scraping //= {}) | .options.scraping.daysBack = 30')
+            '(.storage //= {})
+             | .storage.googleSheets = {serviceAccountEmail: $email, serviceAccountPrivateKey: $key, sheetId: $sheet, worksheetName: $ws}
+             | .storage.localJson = {enabled: true, path: "/output"}
+             | (.options //= {}) | (.options.scraping //= {})
+             | .options.scraping.daysBack = 30')
           docker run --rm \
+            -v ${{ github.workspace }}/output:/output \
             -e MONEYMAN_CONFIG="$MERGED_CONFIG" \
             -e DEBUG \
             -e TZ \
             -e MONEYMAN_UNSAFE_STDOUT \
             ghcr.io/daniel-hauser/moneyman:latest
+
+      - name: Upload transactions artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: transactions
+          path: ${{ github.workspace }}/output/
+          if-no-files-found: warn
