@@ -49,6 +49,42 @@ jobs:
             -e MONEYMAN_UNSAFE_STDOUT \
             ghcr.io/daniel-hauser/moneyman:latest
 
+      - name: Build email HTML from transactions
+        id: buildmail
+        if: always()
+        run: |
+          LATEST=$(ls -t ${{ github.workspace }}/output/*.json 2>/dev/null | head -n1 || echo "")
+          if [ -z "$LATEST" ]; then
+            echo "tx_count=0" >> $GITHUB_OUTPUT
+            echo "<p>No transactions generated.</p>" > email.html
+            exit 0
+          fi
+          COUNT=$(jq 'length' "$LATEST")
+          echo "tx_count=$COUNT" >> $GITHUB_OUTPUT
+          {
+            echo '<div dir="rtl" style="font-family:Arial,sans-serif;">'
+            echo "<h3>תנועות בנק בינלאומי (פאג״י) חשבון 184993</h3>"
+            echo "<p>סה״כ $COUNT תנועות (30 הימים האחרונים)</p>"
+            echo '<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;"><thead><tr style="background:#eee;"><th>תאריך</th><th>תיאור</th><th>סכום</th><th>סטטוס</th></tr></thead><tbody>'
+            jq -r 'sort_by(.date)[] | [(.uniqueId | split("_")[0] | split("-") | "\(.[2])/\(.[1])/\(.[0])"), .description, .chargedAmount, .status] | "<tr><td>\(.[0])</td><td>\(.[1])</td><td style=\"color:\(if .[2] < 0 then "#c33" else "#393" end);font-weight:bold;text-align:left;\">\(if .[2] > 0 then "+" else "" end)\(.[2]) ₪</td><td>\(if .[3] == "pending" then "ממתינה" else "בוצעה" end)</td></tr>"' "$LATEST"
+            echo '</tbody></table></div>'
+          } > email.html
+
+      - name: Send email with transactions
+        if: always() && steps.buildmail.outputs.tx_count != '0'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "תנועות בנק בינלאומי (פאג״י) - חשבון 184993 - ${{ steps.buildmail.outputs.tx_count }} תנועות"
+          to: t.marchum@gmail.com
+          from: moneyman scraper <${{ secrets.MAIL_USERNAME }}>
+          html_body: file://email.html
+          convert_markdown: false
+
       - name: Upload transactions artifact
         if: always()
         uses: actions/upload-artifact@v4
