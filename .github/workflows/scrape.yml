@@ -15,39 +15,6 @@ jobs:
       - name: Pull container image
         run: docker pull ghcr.io/daniel-hauser/moneyman:latest
 
-      - name: Dump transactions via localJson storage
-        env:
-          MONEYMAN_CONFIG_ORIG: ${{ secrets.MONEYMAN_CONFIG }}
-          DEBUG: ${{ github.event.inputs.DEBUG || 'moneyman:*' }}
-          TZ: "Asia/Jerusalem"
-          MONEYMAN_UNSAFE_STDOUT: "true"
-        run: |
-          mkdir -p $GITHUB_WORKSPACE/txn_output
-          chmod 777 $GITHUB_WORKSPACE/txn_output
-          MERGED_CONFIG=$(echo "$MONEYMAN_CONFIG_ORIG" | jq \
-            '.storage = {localJson: {enabled: true, path: "/data/output"}}')
-          docker run --rm \
-            -v $GITHUB_WORKSPACE/txn_output:/data/output \
-            -e MONEYMAN_CONFIG="$MERGED_CONFIG" \
-            -e DEBUG \
-            -e TZ \
-            -e MONEYMAN_UNSAFE_STDOUT \
-            ghcr.io/daniel-hauser/moneyman:latest
-          echo "======== Transaction JSON files ========"
-          ls -la $GITHUB_WORKSPACE/txn_output/
-          echo "======== Content ========"
-          for f in $GITHUB_WORKSPACE/txn_output/*.json; do
-            echo "--- $f ---"
-            cat "$f" | jq '.'
-          done
-
-      - name: Upload transactions artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: transactions
-          path: txn_output/
-
       - name: Run scraper with merged googleSheets config
         env:
           MONEYMAN_CONFIG_ORIG: ${{ secrets.MONEYMAN_CONFIG }}
@@ -65,7 +32,7 @@ jobs:
             --arg key "$GSK_FIXED" \
             --arg sheet "$GSI" \
             --arg ws "$GSW" \
-            '(.storage //= {}) | .storage.googleSheets = {serviceAccountEmail: $email, serviceAccountPrivateKey: $key, sheetId: $sheet, worksheetName: $ws} | del(.storage.localJson)')
+            '(.storage //= {}) | .storage.googleSheets = {serviceAccountEmail: $email, serviceAccountPrivateKey: $key, sheetId: $sheet, worksheetName: $ws} | del(.storage.localJson) | (.options //= {}) | (.options.scraping //= {}) | .options.scraping.daysBack = 30')
           docker run --rm \
             -e MONEYMAN_CONFIG="$MERGED_CONFIG" \
             -e DEBUG \
