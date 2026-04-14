@@ -494,60 +494,39 @@ async function autoMatch(buildingId) {
 // ─── Agent Prompts ───────────────────────────────────────────────────────────
 
 const FINANCE_PROMPT = (buildingId, year) => `
-נתח את המצב הפיננסי של בניין ${buildingId} לשנת ${year}.
+נתח מצב פיננסי של בניין ${buildingId}, שנת ${year}.
 
-1. קרא פרטי בניין עם get_building_info
-2. קרא הוצאות עם get_expenses (שנת ${year})
-3. קרא הכנסות עם get_income (שנת ${year})
-4. נתח:
-   - השווה הוצאות בין חודשים — זהה חריגות מעל 30% מהממוצע
-   - בדוק מאזן: סה"כ הכנסות מול סה"כ הוצאות
-   - חפש הוצאות חוזרות שאפשר לחסוך בהן
-5. כתוב התראות עם write_alerts רק על ממצאים משמעותיים:
-   - severity "high" רק לגירעון תקציבי או חריגה מעל 50%
-   - severity "medium" לחריגה 30-50%
-   - severity "low" להזדמנויות חיסכון
+חוקי יעילות — חובה:
+- קרא כל כלי פעם אחת בלבד. אל תקרא שוב נתונים שכבר קיבלת.
+- כתוב write_alerts פעם אחת עם כל הממצאים במערך אחד.
 
-חשוב: עבוד רק עם נתונים שקיבלת מהכלים. אל תנחש מספרים.
+צעדים:
+1. get_building_info, get_expenses (${year}), get_income (${year}) — שלושתם במקביל
+2. נתח: חריגות הוצאות מעל 30%, מאזן הכנסות/הוצאות, הזדמנויות חיסכון
+3. write_alerts — התראה אחת מסכמת עם כל הממצאים (high/medium/low)
+
+עבוד רק עם נתונים שקיבלת. אל תנחש.
 `.trim();
 
 const COLLECTION_PROMPT = (buildingId, year, currentMonth) => `
-בדוק מצב גבייה לבניין ${buildingId}.
+בדוק מצב גבייה לבניין ${buildingId}, מ-${year}-01 עד ${currentMonth}.
 
-חוקים חשובים — קרא בעיון:
-- "חוב" = דירה שלא שילמה כלל באותו חודש (0 ₪). רק זה נחשב חוב.
-- אם דייר שילם סכום שונה מהתעריף (למשל 440 במקום 515) — זה לא חוב! זה "הפרש לבירור".
-  אולי יש לו הסכם אחר, הנחה, או שהוא שילם חלקית בכוונה. אל תפתח תיק גבייה על הפרשים.
-- תנועות debit (הוצאות) לא קשורות לגבייה. התעלם מהן לחלוטין.
-- אל תשלח מיילים בשלב זה. רק צור תיקים וכתוב התראות.
+חוקי יעילות — חובה:
+- קרא כל כלי פעם אחת בלבד. אל תחזור על קריאות.
+- אל תשלח מיילים. רק תיקים והתראות.
+
+הגדרות:
+- "חוב" = 0 ₪ בחודש מסוים. רק זה.
+- סכום שונה מהתעריף = "הפרש לבירור", לא חוב. אל תפתח תיק.
+- תנועות debit (הוצאות) = התעלם לחלוטין.
 
 צעדים:
-1. קרא פרטי בניין עם get_building_info — שים לב ל-fee_tiers ו-board_member_discount
-2. קרא דירות ודיירים עם get_units_and_residents
-3. קרא תשלומים עם get_payments — לכל חודש מ-${year}-01 עד ${currentMonth}
-4. קרא תיקי גבייה קיימים עם get_collection_cases
-
-5. לכל דירה, חשב את התעריף החודשי:
-   - לפי fee_tiers (מספר חדרים)
-   - אם הדייר חבר ועד (board_member=true): הפחת board_member_discount%
-
-6. לכל דירה, בדוק כל חודש:
-   - אם אין תשלום כלל (0 ₪) → חוב ודאי
-   - אם יש תשלום בסכום מלא או קרוב (±10%) → שולם
-   - אם יש תשלום בסכום שונה → הפרש לבירור (ציין בהערות, אל תפתח תיק גבייה)
-
-7. פתח תיק גבייה (upsert_collection_case) רק עבור דירות עם חודש אחד או יותר ללא תשלום כלל:
-   - escalation_level: "reminder" לתיק חדש
-   - total_debt: רק חודשים שבהם 0 ₪ × תעריף
-   - months_overdue: מספר חודשים ללא תשלום כלל
-   - unpaid_months: רשימת חודשים ללא תשלום
-
-8. סגור (status: "closed") תיקים של דירות שכבר שילמו את כל החודשים
-
-9. כתוב התראה אחת מסכמת עם write_alerts (agent_type: "collection"):
-   - כמה דירות חייבות (באמת, 0 תשלום)
-   - כמה דירות עם הפרשים לבירור
-   - סכום חוב כולל
+1. קרא במקביל: get_building_info, get_units_and_residents, get_payments, get_collection_cases
+2. חשב תעריף לכל דירה (fee_tiers לפי חדרים, board_member_discount)
+3. לכל דירה × כל חודש: 0₪=חוב, סכום מלא±10%=שולם, אחרת=הפרש
+4. upsert_collection_case רק לדירות עם חודש+ ללא תשלום כלל (escalation_level: "reminder")
+5. סגור תיקים של דירות ששילמו הכל
+6. write_alerts — התראה אחת מסכמת (כמה חייבים, כמה הפרשים, סכום כולל)
 
 סכם בקצרה.
 `.trim();
@@ -603,15 +582,20 @@ async function runManagedAgents(buildingIds) {
         const maxWait = 600000;
         const start = Date.now();
         let sawActivity = false;
+        let lastSeenIdx = 0;
         while (Date.now() - start < maxWait) {
-          await new Promise(r => setTimeout(r, 3000));
+          await new Promise(r => setTimeout(r, 5000));
           const evts = await fetch(`${API_BASE}/sessions/${session.id}/events`, { headers: AGENT_HEADERS })
             .then(r => r.json());
           const events = evts.data || [];
 
-          // Track agent activity (tool calls, messages, thinking)
+          // Only process new events (avoid duplicate logging)
+          const newEvents = events.slice(lastSeenIdx);
+          lastSeenIdx = events.length;
+
+          // Track agent activity
           if (!sawActivity) {
-            sawActivity = events.some(e =>
+            sawActivity = newEvents.some(e =>
               e.type === 'agent.message' ||
               e.type === 'agent.tool_use' ||
               e.type === 'agent.mcp_tool_use'
@@ -619,8 +603,8 @@ async function runManagedAgents(buildingIds) {
             if (sawActivity) console.log(`  ⚡ ${agent.name} started working...`);
           }
 
-          // Log tool calls for visibility
-          for (const evt of events) {
+          // Log only NEW tool calls
+          for (const evt of newEvents) {
             if (evt.type === 'agent.tool_use' || evt.type === 'agent.mcp_tool_use') {
               const toolName = evt.name || evt.tool_name || '?';
               console.log(`    🔧 ${toolName}`);
