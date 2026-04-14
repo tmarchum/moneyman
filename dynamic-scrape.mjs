@@ -285,12 +285,17 @@ async function autoMatch(buildingId) {
   const baseFee = building?.monthly_fee || 440;
   const feeTiers = building?.fee_tiers || [];
 
-  const resMap = {};
+  // Build resident name map (all residents per unit, not just primary)
+  const resMap = {};       // unit_id → primary name
+  const allResNames = {};  // unit_id → [all names]
   (residents || []).forEach(r => {
-    if (r.is_primary || !resMap[r.unit_id]) {
-      resMap[r.unit_id] = `${r.first_name || ''} ${r.last_name || ''}`.trim();
-    }
+    const fullName = `${r.first_name || ''} ${r.last_name || ''}`.trim();
+    if (!fullName) return;
+    if (!allResNames[r.unit_id]) allResNames[r.unit_id] = [];
+    allResNames[r.unit_id].push(fullName);
+    if (r.is_primary || !resMap[r.unit_id]) resMap[r.unit_id] = fullName;
   });
+
   const unitMap = {};
   (units || []).forEach(u => { unitMap[u.id] = u; });
 
@@ -312,129 +317,145 @@ async function autoMatch(buildingId) {
     return desc.trim().replace(/\s+/g, ' ').replace(/[,."']/g, '').toLowerCase();
   }
 
-  const GENERIC_WORDS = ['זיכוי', 'מיידי', 'מבנק', 'העברה', 'תשלום', 'הפקדה', 'שיק', 'צק'];
+  const NOISE_WORDS = ['זיכוי', 'מיידי', 'מבנק', 'העברה', 'תשלום', 'הפקדה', 'שיק', 'צק', 'ואו', 'שה', 'ו/או'];
   function extractNameParts(desc) {
     if (!desc) return [];
-    const cleaned = desc.replace(/זיכוי\s+מ[^\s]*\s+מ/g, '').replace(/[,."'\/\\]/g, ' ').replace(/\d{5,}/g, '').trim();
-    return cleaned.split(/\s+/).filter(p => p.length > 2 && !GENERIC_WORDS.includes(p));
+    const cleaned = desc
+      .replace(/זיכוי\s+מ[^\s]*\s+מ/g, '')  // strip "זיכוי מבנק X מ"
+      .replace(/[,."'\/\\-]/g, ' ')
+      .replace(/\d{5,}/g, '')
+      .trim();
+    return cleaned.split(/\s+/).filter(p => p.length > 2 && !NOISE_WORDS.includes(p));
   }
 
-  const SKIP_PATTERNS = ['החזרת שיק', 'משיכת שיק', 'הורא.קבע', 'חברת החשמל', 'עמלה', 'ריבית'];
+  // Skip only non-payment transactions (expenses, fees, bounced checks)
+  const SKIP_PATTERNS = ['החזרת שיק', 'משיכת שיק', 'חברת החשמל', 'עמלה', 'ריבית'];
   function shouldSkip(tx) {
     const desc = tx.description || '';
     return SKIP_PATTERNS.some(p => desc.includes(p));
   }
 
-  // Learn patterns from matched tx
+  // ── Matching engine ──
+  // Runs in a loop: each match teaches the next round (chain learning)
+
   const matchedTx = (allTx || []).filter(tx => tx.match_status === 'matched' && tx.unit_id);
-  const patterns = {};
-  const nameToUnit = {};
-  const confirmedPatterns = {};
 
-  matchedTx.forEach(tx => {
-    const key = normalizeDescription(tx.description);
-    if (key && key.length > 5) {
-      patterns[key] = tx.unit_id;
-      const day = tx.transaction_date ? new Date(tx.transaction_date).getDate() : null;
-      confirmedPatterns[key] = { unitId: tx.unit_id, day, amount: Number(tx.credit) || 0 };
-    }
-    const parts = extractNameParts(tx.description);
-    if (parts.length >= 2) {
-      const nk = parts.sort().join(' ');
-      if (nk.length > 3) nameToUnit[nk] = tx.unit_id;
-    }
-  });
+  function rebuildPatterns() {
+    const descToUnit = {};
+    const namePartsToUnit = {};
+    matchedTx.forEach(tx => {
+      const key = normalizeDescription(tx.description);
+      if (key && key.length > 5) descToUnit[key] = tx.unit_id;
+      const parts = extractNameParts(tx.description);
+      if (parts.length >= 1) {
+        const nk = parts.sort().join(' ');
+        if (nk.length > 3) namePartsToUnit[nk] = tx.unit_id;
+      }
+    });
+    return { descToUnit, namePartsToUnit };
+  }
 
-  function scoreMatch(tx) {
+  function scoreMatch(tx, descToUnit, namePartsToUnit) {
     const key = normalizeDescription(tx.description);
     const credit = Number(tx.credit) || 0;
     const txParts = extractNameParts(tx.description);
-    const txDay = tx.transaction_date ? new Date(tx.transaction_date).getDate() : null;
 
-    if (key && confirmedPatterns[key]) {
-      const cp = confirmedPatterns[key];
-      const unit = unitMap[cp.unitId];
-      if (unit) {
-        const fee = calcUnitFee(unit);
-        if (credit > fee * 2) return null;
-        const dayMatch = cp.day && txDay && Math.abs(cp.day - txDay) <= 3;
-        const amountMatch = Math.abs(credit - cp.amount) < 50;
-        return { unitId: cp.unitId, confidence: 'high', reason: `תיאור זהה${dayMatch ? ' + תאריך' : ''}${amountMatch ? ' + סכום' : ''}` };
+    // ── Tier 1: Exact description match from previously matched tx ──
+    if (key && descToUnit[key]) {
+      const unitId = descToUnit[key];
+      const unit = unitMap[unitId];
+      if (unit && credit <= calcUnitFee(unit) * 3) {
+        return { unitId, confidence: 'high', reason: 'תיאור זהה למאושר' };
       }
     }
 
-    for (const [nameKey, uid] of Object.entries(nameToUnit)) {
+    // ── Tier 2: Name parts overlap with matched patterns ──
+    for (const [nameKey, uid] of Object.entries(namePartsToUnit)) {
       const knownParts = nameKey.split(' ');
-      const overlap = knownParts.filter(p => p.length >= 3 && txParts.some(tp => tp.length >= 3 && (tp.includes(p) || p.includes(tp))));
-      if (overlap.length >= 2) {
+      const overlap = knownParts.filter(p =>
+        p.length >= 3 && txParts.some(tp => tp.length >= 3 && (tp.includes(p) || p.includes(tp)))
+      );
+      // 2+ matching parts, or 1 part of 4+ chars with matching amount
+      if (overlap.length >= 2 || (overlap.length === 1 && overlap[0].length >= 4)) {
         const unit = unitMap[uid];
         if (!unit) continue;
         const fee = calcUnitFee(unit);
-        if (credit > fee * 2) continue;
+        if (credit > fee * 3) continue;
+        if (overlap.length >= 2) return { unitId: uid, confidence: 'high', reason: `שם (${overlap.join(', ')})` };
+        // Single strong match — need amount to be in range
         const ratio = credit / fee;
-        if (ratio >= 0.7 && ratio <= 1.3) return { unitId: uid, confidence: 'high', reason: `שם מאושר (${overlap.join(', ')}) + סכום` };
-        return { unitId: uid, confidence: 'medium', reason: `שם מאושר (${overlap.join(', ')})` };
+        if (ratio >= 0.5 && ratio <= 1.5) return { unitId: uid, confidence: 'high', reason: `שם (${overlap[0]}) + סכום` };
       }
     }
 
+    // ── Tier 3: Match against resident DB names ──
     const desc = (tx.description || '').toLowerCase();
     for (const unit of (units || [])) {
-      const name = (resMap[unit.id] || '').trim();
-      if (!name) continue;
-      const parts = name.split(' ').filter(p => p.length >= 3);
-      const matching = parts.filter(p => desc.includes(p.toLowerCase()));
-      if (parts.length >= 2 && matching.length >= 2) {
-        const fee = calcUnitFee(unit);
-        if (credit > fee * 2) continue;
-        const ratio = credit / fee;
-        if (ratio >= 0.8 && ratio <= 1.2) return { unitId: unit.id, confidence: 'medium', reason: `שם מ-DB (${matching.join(', ')}) + סכום` };
-        return { unitId: unit.id, confidence: 'low', reason: `שם מ-DB (${matching.join(', ')})` };
+      const names = allResNames[unit.id] || [];
+      for (const name of names) {
+        const parts = name.split(' ').filter(p => p.length >= 3);
+        if (parts.length === 0) continue;
+        const matching = parts.filter(p => desc.includes(p.toLowerCase()));
+        // Need 2 parts match, or 1 part of 4+ chars
+        if (matching.length >= 2 || (matching.length === 1 && matching[0].length >= 4)) {
+          const fee = calcUnitFee(unit);
+          if (credit > fee * 3) continue;
+          if (matching.length >= 2) return { unitId: unit.id, confidence: 'high', reason: `שם DB (${matching.join(', ')})` };
+          const ratio = credit / fee;
+          if (ratio >= 0.5 && ratio <= 1.5) return { unitId: unit.id, confidence: 'medium', reason: `שם DB (${matching[0]}) + סכום` };
+        }
       }
     }
+
     return null;
   }
 
-  const unmatched = (allTx || []).filter(tx => tx.match_status === 'unmatched' && Number(tx.credit) > 0);
-  let autoMatched = 0, suggested = 0;
+  let totalMatched = 0, totalSuggested = 0;
 
-  for (const tx of unmatched) {
-    if (shouldSkip(tx)) continue;
-    const result = scoreMatch(tx);
-    if (!result) continue;
+  // Run matching in rounds — each round's matches feed the next
+  for (let round = 1; round <= 5; round++) {
+    const { descToUnit, namePartsToUnit } = rebuildPatterns();
+    const unmatched = (allTx || []).filter(tx =>
+      tx.match_status === 'unmatched' && Number(tx.credit) > 0
+    );
 
-    const { unitId, confidence, reason } = result;
-    const unit = unitMap[unitId];
-    if (!unit) continue;
+    let roundMatched = 0;
+    for (const tx of unmatched) {
+      if (shouldSkip(tx)) continue;
+      const result = scoreMatch(tx, descToUnit, namePartsToUnit);
+      if (!result) continue;
 
-    const existingMatch = matchedTx.find(t => t.unit_id === unitId && t.month === tx.month);
-    if (existingMatch && normalizeDescription(existingMatch.description) !== normalizeDescription(tx.description)) continue;
+      const { unitId, confidence, reason } = result;
+      const unit = unitMap[unitId];
+      if (!unit) continue;
 
-    const newStatus = confidence === 'high' ? 'matched' : 'suggested';
-    await fetch(`${SUPABASE_URL}/rest/v1/bank_transactions?id=eq.${tx.id}`, {
-      method: 'PATCH',
-      headers: { ...headers, 'Prefer': 'return=minimal' },
-      body: JSON.stringify({ unit_id: unitId, match_status: newStatus }),
-    });
+      const newStatus = confidence === 'high' ? 'matched' : 'suggested';
+      await fetch(`${SUPABASE_URL}/rest/v1/bank_transactions?id=eq.${tx.id}`, {
+        method: 'PATCH',
+        headers: { ...headers, 'Prefer': 'return=minimal' },
+        body: JSON.stringify({ unit_id: unitId, match_status: newStatus }),
+      });
 
-    if (confidence === 'high') {
-      const key = normalizeDescription(tx.description);
-      if (key) patterns[key] = unitId;
-      matchedTx.push({ ...tx, unit_id: unitId, match_status: 'matched' });
-      autoMatched++;
-    } else {
-      suggested++;
+      tx.match_status = newStatus;
+      tx.unit_id = unitId;
+
+      if (confidence === 'high') {
+        matchedTx.push(tx);
+        roundMatched++;
+        totalMatched++;
+      } else {
+        totalSuggested++;
+      }
     }
+
+    if (roundMatched === 0) break; // No new matches — stop
+    console.log(`    round ${round}: ${roundMatched} matched`);
   }
 
-  // Sync payments
-  const { data: allMatched } = await fetch(
-    `${SUPABASE_URL}/rest/v1/bank_transactions?building_id=eq.${buildingId}&match_status=eq.matched&credit=gt.0&select=unit_id,month,credit`,
-    { headers }
-  ).then(r => r.json().then(d => ({ data: d })));
-
+  // ── Sync payments ──
+  const finalMatched = (allTx || []).filter(tx => tx.match_status === 'matched' && tx.unit_id && Number(tx.credit) > 0);
   const groups = {};
-  (allMatched || []).forEach(tx => {
-    if (!tx.unit_id || !tx.month) return;
+  finalMatched.forEach(tx => {
     const k = `${tx.unit_id}|${tx.month}`;
     if (!groups[k]) groups[k] = { unitId: tx.unit_id, month: tx.month, total: 0 };
     groups[k].total += Number(tx.credit) || 0;
@@ -467,8 +488,69 @@ async function autoMatch(buildingId) {
     }
   }
 
-  console.log(`  Auto-matched: ${autoMatched}, Suggested: ${suggested}, Payments created: ${created}`);
+  console.log(`  Auto-matched: ${totalMatched}, Suggested: ${totalSuggested}, Payments: ${created}`);
 }
+
+// ─── Agent Prompts ───────────────────────────────────────────────────────────
+
+const FINANCE_PROMPT = (buildingId, year) => `
+נתח את המצב הפיננסי של בניין ${buildingId} לשנת ${year}.
+
+1. קרא פרטי בניין עם get_building_info
+2. קרא הוצאות עם get_expenses (שנת ${year})
+3. קרא הכנסות עם get_income (שנת ${year})
+4. נתח:
+   - השווה הוצאות בין חודשים — זהה חריגות מעל 30% מהממוצע
+   - בדוק מאזן: סה"כ הכנסות מול סה"כ הוצאות
+   - חפש הוצאות חוזרות שאפשר לחסוך בהן
+5. כתוב התראות עם write_alerts רק על ממצאים משמעותיים:
+   - severity "high" רק לגירעון תקציבי או חריגה מעל 50%
+   - severity "medium" לחריגה 30-50%
+   - severity "low" להזדמנויות חיסכון
+
+חשוב: עבוד רק עם נתונים שקיבלת מהכלים. אל תנחש מספרים.
+`.trim();
+
+const COLLECTION_PROMPT = (buildingId, year, currentMonth) => `
+בדוק מצב גבייה לבניין ${buildingId}.
+
+חוקים חשובים — קרא בעיון:
+- "חוב" = דירה שלא שילמה כלל באותו חודש (0 ₪). רק זה נחשב חוב.
+- אם דייר שילם סכום שונה מהתעריף (למשל 440 במקום 515) — זה לא חוב! זה "הפרש לבירור".
+  אולי יש לו הסכם אחר, הנחה, או שהוא שילם חלקית בכוונה. אל תפתח תיק גבייה על הפרשים.
+- תנועות debit (הוצאות) לא קשורות לגבייה. התעלם מהן לחלוטין.
+- אל תשלח מיילים בשלב זה. רק צור תיקים וכתוב התראות.
+
+צעדים:
+1. קרא פרטי בניין עם get_building_info — שים לב ל-fee_tiers ו-board_member_discount
+2. קרא דירות ודיירים עם get_units_and_residents
+3. קרא תשלומים עם get_payments — לכל חודש מ-${year}-01 עד ${currentMonth}
+4. קרא תיקי גבייה קיימים עם get_collection_cases
+
+5. לכל דירה, חשב את התעריף החודשי:
+   - לפי fee_tiers (מספר חדרים)
+   - אם הדייר חבר ועד (board_member=true): הפחת board_member_discount%
+
+6. לכל דירה, בדוק כל חודש:
+   - אם אין תשלום כלל (0 ₪) → חוב ודאי
+   - אם יש תשלום בסכום מלא או קרוב (±10%) → שולם
+   - אם יש תשלום בסכום שונה → הפרש לבירור (ציין בהערות, אל תפתח תיק גבייה)
+
+7. פתח תיק גבייה (upsert_collection_case) רק עבור דירות עם חודש אחד או יותר ללא תשלום כלל:
+   - escalation_level: "reminder" לתיק חדש
+   - total_debt: רק חודשים שבהם 0 ₪ × תעריף
+   - months_overdue: מספר חודשים ללא תשלום כלל
+   - unpaid_months: רשימת חודשים ללא תשלום
+
+8. סגור (status: "closed") תיקים של דירות שכבר שילמו את כל החודשים
+
+9. כתוב התראה אחת מסכמת עם write_alerts (agent_type: "collection"):
+   - כמה דירות חייבות (באמת, 0 תשלום)
+   - כמה דירות עם הפרשים לבירור
+   - סכום חוב כולל
+
+סכם בקצרה.
+`.trim();
 
 // ─── Step 5: Run managed agents ──────────────────────────────────────────────
 
@@ -509,8 +591,8 @@ async function runManagedAgents(buildingIds) {
         const year = new Date().getFullYear();
         const currentMonth = `${year}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
         const prompt = agent.name === 'אנליסט פיננסי'
-          ? `נתח את המצב הפיננסי של בניין ${buildingId}. קרא פרטי בניין, הוצאות והכנסות ${year}. זהה חריגות, בדוק מאזן, חפש חיסכון. כתוב התראות עם write_alerts.`
-          : `נהל גבייה לבניין ${buildingId}. קרא דירות, תשלומים ותיקי גבייה. בדוק חובות מ-${year}-01 עד ${currentMonth}. צור/עדכן תיקי גבייה, שלח מיילים, כתוב התראות.`;
+          ? FINANCE_PROMPT(buildingId, year)
+          : COLLECTION_PROMPT(buildingId, year, currentMonth);
 
         await fetch(`${API_BASE}/sessions/${session.id}/events`, {
           method: 'POST', headers: AGENT_HEADERS,
