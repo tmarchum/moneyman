@@ -599,22 +599,45 @@ async function runManagedAgents(buildingIds) {
           body: JSON.stringify({ events: [{ type: 'user.message', content: [{ type: 'text', text: prompt }] }] }),
         });
 
-        // Poll for completion
+        // Poll for completion — wait for agent activity before treating idle as done
         const maxWait = 600000;
         const start = Date.now();
+        let sawActivity = false;
         while (Date.now() - start < maxWait) {
+          await new Promise(r => setTimeout(r, 3000));
           const evts = await fetch(`${API_BASE}/sessions/${session.id}/events`, { headers: AGENT_HEADERS })
             .then(r => r.json());
           const events = evts.data || [];
-          if (events.find(e => e.type === 'session.status_idle')) {
+
+          // Track agent activity (tool calls, messages, thinking)
+          if (!sawActivity) {
+            sawActivity = events.some(e =>
+              e.type === 'agent.message' ||
+              e.type === 'agent.tool_use' ||
+              e.type === 'agent.mcp_tool_use'
+            );
+            if (sawActivity) console.log(`  ⚡ ${agent.name} started working...`);
+          }
+
+          // Log tool calls for visibility
+          for (const evt of events) {
+            if (evt.type === 'agent.tool_use' || evt.type === 'agent.mcp_tool_use') {
+              const toolName = evt.name || evt.tool_name || '?';
+              console.log(`    🔧 ${toolName}`);
+            }
+          }
+
+          // Only accept idle AFTER we've seen activity
+          if (sawActivity && events.find(e => e.type === 'session.status_idle')) {
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
             console.log(`  ✓ ${agent.name} completed in ${elapsed}s`);
             break;
           }
+
           if (events.find(e => e.type === 'session.error' || e.type === 'error')) {
-            throw new Error('Agent error');
+            const errEvt = events.find(e => e.type === 'session.error' || e.type === 'error');
+            throw new Error(`Agent error: ${JSON.stringify(errEvt)}`);
           }
-          await new Promise(r => setTimeout(r, 3000));
         }
       } catch (err) {
         console.error(`  ✗ ${agent.name}: ${err.message}`);
