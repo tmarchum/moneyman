@@ -390,21 +390,31 @@ async function autoMatch(buildingId) {
 
     // ── Tier 3: Match against resident DB names ──
     const desc = (tx.description || '').toLowerCase();
+    const tier3Candidates = [];
     for (const unit of (units || [])) {
       const names = allResNames[unit.id] || [];
       for (const name of names) {
         const parts = name.split(' ').filter(p => p.length >= 3);
         if (parts.length === 0) continue;
         const matching = parts.filter(p => desc.includes(p.toLowerCase()));
-        // Need 2 parts match, or 1 part of 4+ chars
         if (matching.length >= 2 || (matching.length === 1 && matching[0].length >= 4)) {
           const fee = calcUnitFee(unit);
           if (credit > fee * 3) continue;
-          if (matching.length >= 2) return { unitId: unit.id, confidence: 'high', reason: `שם DB (${matching.join(', ')})` };
-          const ratio = credit / fee;
-          if (ratio >= 0.5 && ratio <= 1.5) return { unitId: unit.id, confidence: 'medium', reason: `שם DB (${matching[0]}) + סכום` };
+          tier3Candidates.push({ unitId: unit.id, matching, fee });
         }
       }
+    }
+
+    // Same-name disambiguation: if name matches 2+ units → suggested, not auto-matched
+    if (tier3Candidates.length === 1) {
+      const c = tier3Candidates[0];
+      if (c.matching.length >= 2) return { unitId: c.unitId, confidence: 'high', reason: `שם DB (${c.matching.join(', ')})` };
+      const ratio = credit / c.fee;
+      if (ratio >= 0.5 && ratio <= 1.5) return { unitId: c.unitId, confidence: 'medium', reason: `שם DB (${c.matching[0]}) + סכום` };
+    } else if (tier3Candidates.length > 1) {
+      // Multiple units match same name — flag for manual review
+      const unitNums = tier3Candidates.map(c => unitMap[c.unitId]?.number).join(',');
+      return { unitId: tier3Candidates[0].unitId, confidence: 'low', reason: `שם תואם דירות ${unitNums} — לבדיקה ידנית` };
     }
 
     return null;
@@ -430,10 +440,11 @@ async function autoMatch(buildingId) {
       if (!unit) continue;
 
       const newStatus = confidence === 'high' ? 'matched' : 'suggested';
+      const notes = reason || null;
       await fetch(`${SUPABASE_URL}/rest/v1/bank_transactions?id=eq.${tx.id}`, {
         method: 'PATCH',
         headers: { ...headers, 'Prefer': 'return=minimal' },
-        body: JSON.stringify({ unit_id: unitId, match_status: newStatus }),
+        body: JSON.stringify({ unit_id: unitId, match_status: newStatus, notes }),
       });
 
       tx.match_status = newStatus;
@@ -463,35 +474,261 @@ async function autoMatch(buildingId) {
 
   const existingPayments = await supabaseGet('payments', `building_id=eq.${buildingId}&select=*`);
   let created = 0;
+  const largePayments = [];
 
   for (const g of Object.values(groups)) {
     const unit = unitMap[g.unitId];
     if (!unit) continue;
     const fee = calcUnitFee(unit);
+
+    // Flag large payments (>1.5x fee) — might cover multiple months
+    if (g.total > fee * 1.5) {
+      const monthsCovered = Math.round(g.total / fee);
+      largePayments.push({
+        unit: unit.number, amount: g.total, fee, month: g.month,
+        possibleMonths: monthsCovered,
+      });
+    }
+
     const status = g.total >= fee ? 'paid' : 'partial';
     const existing = (existingPayments || []).find(p => p.unit_id === g.unitId && p.month === g.month);
+    const paymentNotes = g.total > fee * 1.5
+      ? `תשלום חריג: ${g.total}₪ (תעריף ${fee}₪, ייתכן ${Math.round(g.total / fee)} חודשים)`
+      : null;
+
     if (existing) {
       if (existing.status === 'paid' && Number(existing.amount) >= g.total) continue;
       await fetch(`${SUPABASE_URL}/rest/v1/payments?id=eq.${existing.id}`, {
         method: 'PATCH',
         headers: { ...headers, 'Prefer': 'return=minimal' },
-        body: JSON.stringify({ amount: g.total, status, paid_at: new Date().toISOString().split('T')[0], method: 'הוראת קבע' }),
+        body: JSON.stringify({ amount: g.total, status, paid_at: new Date().toISOString().split('T')[0], method: 'הוראת קבע', ...(paymentNotes ? { notes: paymentNotes } : {}) }),
       });
     } else {
       try {
         await supabaseInsert('payments', [{
           building_id: buildingId, unit_id: g.unitId, amount: g.total,
           month: g.month, status, paid_at: new Date().toISOString().split('T')[0], method: 'הוראת קבע',
+          ...(paymentNotes ? { notes: paymentNotes } : {}),
         }]);
         created++;
       } catch (_) {}
     }
   }
 
+  if (largePayments.length > 0) {
+    console.log(`  ⚠ ${largePayments.length} large payment(s) flagged for review:`);
+    for (const lp of largePayments) {
+      console.log(`    דירה ${lp.unit}: ${lp.amount}₪ (חודש ${lp.month}, תעריף ${lp.fee}₪, ~${lp.possibleMonths} חודשים)`);
+    }
+  }
+
   console.log(`  Auto-matched: ${totalMatched}, Suggested: ${totalSuggested}, Payments: ${created}`);
 }
 
-// ─── Agent Prompts ───────────────────────────────────────────────────────────
+// ─── Step 5: Collection analysis (code, not agent) ──────────────────────────
+
+async function runCollectionAnalysis(buildingId) {
+  console.log(`  Running collection analysis...`);
+
+  const year = new Date().getFullYear();
+  const currentMonth = new Date().getMonth() + 1; // 1-based
+
+  const [units, residents, payments, cases, buildings] = await Promise.all([
+    supabaseGet('units', `building_id=eq.${buildingId}&select=id,number,rooms,board_member,monthly_fee`),
+    supabaseGet('unit_residents', `select=unit_id,first_name,last_name,is_primary`),
+    supabaseGet('payments', `building_id=eq.${buildingId}&select=*`),
+    supabaseGet('collection_cases', `building_id=eq.${buildingId}&select=*`),
+    supabaseGet('buildings', `id=eq.${buildingId}&select=monthly_fee,fee_tiers,board_member_discount`),
+  ]);
+
+  const building = buildings?.[0];
+  const feeTiers = building?.fee_tiers || [];
+  const baseFee = building?.monthly_fee || 440;
+
+  function calcFee(unit) {
+    let fee = unit.monthly_fee || 0;
+    if (!fee && feeTiers.length > 0) {
+      const tier = feeTiers.find(t => t.rooms === unit.rooms);
+      if (tier) fee = Number(tier.fee);
+    }
+    if (!fee) fee = baseFee;
+    if (unit.board_member && building?.board_member_discount) {
+      fee = fee * (1 - Number(building.board_member_discount) / 100);
+    }
+    return fee;
+  }
+
+  // Build resident name map for display
+  const resNames = {};
+  (residents || []).forEach(r => {
+    if (r.is_primary || !resNames[r.unit_id]) {
+      resNames[r.unit_id] = `${r.first_name || ''} ${r.last_name || ''}`.trim();
+    }
+  });
+
+  // Build payment lookup: unit_id+month → amount
+  const paymentMap = {};
+  (payments || []).forEach(p => {
+    const key = `${p.unit_id}|${p.month}`;
+    paymentMap[key] = (paymentMap[key] || 0) + Number(p.amount || 0);
+  });
+
+  // Existing cases lookup: unit_id → case
+  const caseMap = {};
+  (cases || []).forEach(c => { if (c.status !== 'closed') caseMap[c.unit_id] = c; });
+
+  let totalDebt = 0;
+  let unitsWithDebt = 0;
+  let unitsWithDiff = 0;
+  let casesCreated = 0;
+  let casesClosed = 0;
+
+  for (const unit of (units || [])) {
+    const fee = calcFee(unit);
+    const unpaidMonths = [];
+    const diffMonths = [];
+
+    for (let m = 1; m <= currentMonth; m++) {
+      const monthStr = `${year}-${String(m).padStart(2, '0')}`;
+      const paid = paymentMap[`${unit.id}|${monthStr}`] || 0;
+
+      if (paid === 0) {
+        unpaidMonths.push(monthStr);
+      } else if (paid < fee * 0.9) {
+        diffMonths.push({ month: monthStr, paid, expected: fee, diff: fee - paid });
+      }
+    }
+
+    if (unpaidMonths.length > 0) {
+      // Real debt — create/update collection case
+      unitsWithDebt++;
+      const debt = unpaidMonths.length * fee;
+      totalDebt += debt;
+      const resName = resNames[unit.id] || '';
+
+      const existingCase = caseMap[unit.id];
+      const caseData = {
+        building_id: buildingId,
+        unit_id: unit.id,
+        status: 'open',
+        escalation_level: existingCase?.escalation_level || 'reminder',
+        total_debt: debt,
+        months_overdue: unpaidMonths.length,
+        notes: `דירה ${unit.number} (${resName}): חוב ${debt}₪ — חודשים ללא תשלום: ${unpaidMonths.join(', ')}`,
+      };
+
+      if (existingCase) {
+        await fetch(`${SUPABASE_URL}/rest/v1/collection_cases?id=eq.${existingCase.id}`, {
+          method: 'PATCH',
+          headers: { ...headers, 'Prefer': 'return=minimal' },
+          body: JSON.stringify(caseData),
+        });
+      } else {
+        try {
+          await supabaseInsert('collection_cases', [caseData]);
+          casesCreated++;
+        } catch (_) {}
+      }
+    } else if (caseMap[unit.id]) {
+      // All paid — close existing case
+      await fetch(`${SUPABASE_URL}/rest/v1/collection_cases?id=eq.${caseMap[unit.id].id}`, {
+        method: 'PATCH',
+        headers: { ...headers, 'Prefer': 'return=minimal' },
+        body: JSON.stringify({ status: 'closed', notes: 'נסגר אוטומטית — כל החודשים שולמו' }),
+      });
+      casesClosed++;
+    }
+
+    if (diffMonths.length > 0) unitsWithDiff++;
+  }
+
+  // Write summary alert
+  try {
+    await supabaseInsert('agent_alerts', [{
+      building_id: buildingId,
+      agent_type: 'collection',
+      severity: unitsWithDebt > 0 ? 'high' : 'low',
+      title: `סיכום גבייה — ${new Date().toISOString().split('T')[0]}`,
+      message: `דירות חייבות: ${unitsWithDebt}, סכום חוב כולל: ${totalDebt}₪, הפרשים לבירור: ${unitsWithDiff}, תיקים חדשים: ${casesCreated}, תיקים שנסגרו: ${casesClosed}`,
+    }]);
+  } catch (_) {}
+
+  console.log(`  Collection: ${unitsWithDebt} debts (${totalDebt}₪), ${unitsWithDiff} diffs, ${casesCreated} new cases, ${casesClosed} closed`);
+}
+
+// ─── Step 6: Finance analysis (code, not agent) ─────────────────────────────
+
+async function runFinanceAnalysis(buildingId) {
+  console.log(`  Running finance analysis...`);
+
+  const year = new Date().getFullYear();
+
+  const [expenses, payments, buildings] = await Promise.all([
+    supabaseGet('expenses', `building_id=eq.${buildingId}&select=amount,category,month,description`),
+    supabaseGet('payments', `building_id=eq.${buildingId}&select=amount,month`),
+    supabaseGet('buildings', `id=eq.${buildingId}&select=name`),
+  ]);
+
+  // Group expenses by month
+  const expByMonth = {};
+  let totalExpenses = 0;
+  (expenses || []).filter(e => (e.month || '').startsWith(String(year))).forEach(e => {
+    const m = e.month;
+    if (!expByMonth[m]) expByMonth[m] = 0;
+    expByMonth[m] += Number(e.amount) || 0;
+    totalExpenses += Number(e.amount) || 0;
+  });
+
+  // Group income by month
+  const incByMonth = {};
+  let totalIncome = 0;
+  (payments || []).filter(p => (p.month || '').startsWith(String(year))).forEach(p => {
+    const m = p.month;
+    if (!incByMonth[m]) incByMonth[m] = 0;
+    incByMonth[m] += Number(p.amount) || 0;
+    totalIncome += Number(p.amount) || 0;
+  });
+
+  const months = [...new Set([...Object.keys(expByMonth), ...Object.keys(incByMonth)])].sort();
+  if (months.length === 0) {
+    console.log(`  Finance: no data for ${year}`);
+    return;
+  }
+
+  // Find expense outliers (>30% above average)
+  const expValues = Object.values(expByMonth);
+  const avgExp = expValues.length > 0 ? expValues.reduce((a, b) => a + b, 0) / expValues.length : 0;
+  const outliers = [];
+  for (const [m, val] of Object.entries(expByMonth)) {
+    if (avgExp > 0 && val > avgExp * 1.3) {
+      outliers.push({ month: m, amount: val, avg: Math.round(avgExp), pct: Math.round((val / avgExp - 1) * 100) });
+    }
+  }
+
+  const balance = totalIncome - totalExpenses;
+  const severity = balance < 0 ? 'high' : outliers.length > 0 ? 'medium' : 'low';
+
+  const messageParts = [
+    `מאזן ${year}: הכנסות ${totalIncome}₪, הוצאות ${totalExpenses}₪, ${balance >= 0 ? 'עודף' : 'גירעון'} ${Math.abs(balance)}₪`,
+  ];
+  if (outliers.length > 0) {
+    messageParts.push(`חריגות הוצאות: ${outliers.map(o => `${o.month}: ${o.amount}₪ (+${o.pct}% מהממוצע)`).join(', ')}`);
+  }
+
+  try {
+    await supabaseInsert('agent_alerts', [{
+      building_id: buildingId,
+      agent_type: 'expense_analysis',
+      severity,
+      title: `ניתוח פיננסי — ${new Date().toISOString().split('T')[0]}`,
+      message: messageParts.join('. '),
+    }]);
+  } catch (_) {}
+
+  console.log(`  Finance: balance ${balance >= 0 ? '+' : ''}${balance}₪, ${outliers.length} outliers`);
+}
+
+// ─── Agent Prompts (weekly review only) ─────────────────────────────────────
 
 const FINANCE_PROMPT = (buildingId, year) => `
 נתח מצב פיננסי של בניין ${buildingId}, שנת ${year}.
@@ -666,13 +903,17 @@ async function main() {
 
     // 2d. Auto-match
     await autoMatch(buildingId);
+
+    // 2e. Collection + Finance analysis (code, runs every time)
+    await runCollectionAnalysis(buildingId);
+    await runFinanceAnalysis(buildingId);
   }
 
-  // 3. Run managed agents for all buildings
-  if (totalNew > 0 || process.env.FORCE_AGENTS === 'true') {
+  // 3. Run managed agents only on weekly review (Fridays) or if forced
+  const dayOfWeek = new Date().getDay(); // 0=Sun, 5=Fri
+  if (process.env.FORCE_AGENTS === 'true' || dayOfWeek === 5) {
+    console.log('\n=== Weekly agent review ===');
     await runManagedAgents(buildingIds);
-  } else {
-    console.log('\nNo new transactions — skipping agents');
   }
 
   console.log('\n=== Done ===');
