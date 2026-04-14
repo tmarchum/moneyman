@@ -222,6 +222,53 @@ async function pushTransactions(buildingId, transactions) {
   return newRows.length;
 }
 
+// ─── Step 3b: Remove duplicate transactions ──────────────────────────────────
+
+async function deduplicateTransactions(buildingId) {
+  console.log(`  Checking for duplicates...`);
+
+  const allTx = await supabaseGet('bank_transactions',
+    `building_id=eq.${buildingId}&select=id,month,description,credit,debit,created_at&order=created_at.asc`);
+
+  // Group by month+description+credit+debit — keep the oldest, delete the rest
+  const seen = {};
+  const toDelete = [];
+
+  for (const tx of allTx || []) {
+    const key = `${tx.month}|${tx.description}|${tx.credit}|${tx.debit}`;
+    if (seen[key]) {
+      toDelete.push(tx.id);
+    } else {
+      seen[key] = tx.id;
+    }
+  }
+
+  if (toDelete.length === 0) {
+    console.log(`  No duplicates found`);
+    return;
+  }
+
+  console.log(`  Found ${toDelete.length} duplicates to remove`);
+
+  // Delete in batches of 50
+  for (let i = 0; i < toDelete.length; i += 50) {
+    const batch = toDelete.slice(i, i + 50);
+    const idList = batch.join(',');
+
+    // Delete linked expenses first
+    await fetch(`${SUPABASE_URL}/rest/v1/expenses?bank_transaction_id=in.(${idList})`, {
+      method: 'DELETE', headers: { ...headers, 'Prefer': 'return=minimal' },
+    });
+
+    // Delete the duplicate transactions
+    await fetch(`${SUPABASE_URL}/rest/v1/bank_transactions?id=in.(${idList})`, {
+      method: 'DELETE', headers: { ...headers, 'Prefer': 'return=minimal' },
+    });
+  }
+
+  console.log(`  Removed ${toDelete.length} duplicate transactions`);
+}
+
 // ─── Step 4: Auto-match (inline, no SDK dependency) ──────────────────────────
 
 async function autoMatch(buildingId) {
@@ -525,7 +572,10 @@ async function main() {
     const newCount = await pushTransactions(buildingId, result.transactions);
     totalNew += newCount;
 
-    // 2c. Auto-match
+    // 2c. Deduplicate (month+description+amount)
+    await deduplicateTransactions(buildingId);
+
+    // 2d. Auto-match
     await autoMatch(buildingId);
   }
 
