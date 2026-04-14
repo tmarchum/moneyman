@@ -12,7 +12,14 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Pull container image
         run: docker pull ghcr.io/daniel-hauser/moneyman:latest
 
@@ -84,6 +91,32 @@ jobs:
           from: moneyman scraper <${{ secrets.MAIL_USERNAME }}>
           html_body: file://email.html
           convert_markdown: false
+
+      - name: Push transactions to Supabase
+        if: success()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          BUILDING_ID: ${{ secrets.BUILDING_ID }}
+          OUTPUT_DIR: ${{ github.workspace }}/output
+        run: node push-to-supabase.mjs
+
+      - name: Auto-match transactions
+        if: success()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          BUILDING_ID: ${{ secrets.BUILDING_ID }}
+        run: |
+          npm install @supabase/supabase-js --no-save
+          node auto-match-all.js
+
+      - name: Run managed agents (finance + collection)
+        if: success()
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BUILDING_ID: ${{ secrets.BUILDING_ID }}
+        run: node run-managed-agents.js
 
       - name: Upload transactions artifact
         if: always()
