@@ -7,4 +7,4 @@ moneyman.conf.jsonc
 
 local_config/
 dst/
-output
+output.env.local
