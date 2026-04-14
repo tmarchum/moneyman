@@ -108,8 +108,8 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           BUILDING_ID: ${{ secrets.BUILDING_ID }}
         run: |
-          npm install @supabase/supabase-js --no-save
-          node auto-match-all.js
+          npm install @supabase/supabase-js dotenv --no-save
+          node auto-match-all.cjs
 
       - name: Run managed agents (finance + collection)
         if: success()
