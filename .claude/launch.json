@@ -1,0 +1,25 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Bank Scraper",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["web-ui.mjs"],
+      "port": 4500,
+      "env": {
+        "PORT": "4500"
+      }
+    },
+    {
+      "name": "AI Dashboard",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--prefix",
+        "C:/Users/guest1000/Desktop/dashboard"
+      ],
+      "port": 5173
+    }
+  ]
+}

@@ -8,25 +8,26 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const BUILDING_ID = process.env.BUILDING_ID;
 
 if (!ANTHROPIC_API_KEY || !BUILDING_ID) {
-  console.error('ERROR: Missing ANTHROPIC_API_KEY or BUILDING_ID');
+  console.error("ERROR: Missing ANTHROPIC_API_KEY or BUILDING_ID");
   process.exit(1);
 }
 
-const API_BASE = 'https://api.anthropic.com/v1';
+const API_BASE = "https://api.anthropic.com/v1";
 const HEADERS = {
-  'x-api-key': ANTHROPIC_API_KEY,
-  'anthropic-beta': 'managed-agents-2026-04-01',
-  'anthropic-version': '2023-06-01',
-  'content-type': 'application/json',
+  "x-api-key": ANTHROPIC_API_KEY,
+  "anthropic-beta": "managed-agents-2026-04-01",
+  "anthropic-version": "2023-06-01",
+  "content-type": "application/json",
 };
 
 // ─── Agent Configuration ──────────────────────────────────────────────────────
 
 const AGENTS = [
   {
-    id: 'agent_011Ca2LtM3B3VQDyKnDvm7Sv',
-    name: 'אנליסט פיננסי',
-    prompt: (buildingId) => `
+    id: "agent_011Ca2LtM3B3VQDyKnDvm7Sv",
+    name: "אנליסט פיננסי",
+    prompt: (buildingId) =>
+      `
 נתח את המצב הפיננסי של בניין ${buildingId}.
 
 1. קרא את פרטי הבניין עם get_building_info
@@ -47,12 +48,12 @@ const AGENTS = [
 `.trim(),
   },
   {
-    id: 'agent_011Ca2Lu1GK1Pmoj6rXwnBY7',
-    name: 'מנהל גבייה',
+    id: "agent_011Ca2Lu1GK1Pmoj6rXwnBY7",
+    name: "מנהל גבייה",
     prompt: (buildingId) => {
       const now = new Date();
       const year = now.getFullYear();
-      const currentMonth = `${year}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const currentMonth = `${year}-${String(now.getMonth() + 1).padStart(2, "0")}`;
       return `
 נהל את הגבייה של בניין ${buildingId}.
 
@@ -90,13 +91,13 @@ const AGENTS = [
   },
 ];
 
-const ENV_ID = 'env_01LMDFfVfgEKUFSYBUBVof9a';
+const ENV_ID = "env_01LMDFfVfgEKUFSYBUBVof9a";
 
 // ─── API Helpers ──────────────────────────────────────────────────────────────
 
 async function createSession(agentId) {
   const res = await fetch(`${API_BASE}/sessions`, {
-    method: 'POST',
+    method: "POST",
     headers: HEADERS,
     body: JSON.stringify({
       agent: agentId,
@@ -112,13 +113,15 @@ async function createSession(agentId) {
 
 async function sendMessage(sessionId, text) {
   const res = await fetch(`${API_BASE}/sessions/${sessionId}/events`, {
-    method: 'POST',
+    method: "POST",
     headers: HEADERS,
     body: JSON.stringify({
-      events: [{
-        type: 'user.message',
-        content: [{ type: 'text', text }],
-      }],
+      events: [
+        {
+          type: "user.message",
+          content: [{ type: "text", text }],
+        },
+      ],
     }),
   });
   if (!res.ok) {
@@ -142,23 +145,28 @@ async function pollForCompletion(sessionId, maxWaitMs = 600000) {
     }
 
     const data = await res.json();
-    const events = data.data || data.events || (Array.isArray(data) ? data : []);
+    const events =
+      data.data || data.events || (Array.isArray(data) ? data : []);
 
     // Check for completion
-    const idleEvent = events.find(e => e.type === 'session.status_idle');
+    const idleEvent = events.find((e) => e.type === "session.status_idle");
     if (idleEvent) {
       // Find last agent message
-      const agentMessages = events.filter(e => e.type === 'agent.message');
+      const agentMessages = events.filter((e) => e.type === "agent.message");
       if (agentMessages.length > 0) {
         const lastMsg = agentMessages[agentMessages.length - 1];
-        const textBlocks = (lastMsg.content || []).filter(b => b.type === 'text');
-        return textBlocks.map(b => b.text).join('\n');
+        const textBlocks = (lastMsg.content || []).filter(
+          (b) => b.type === "text",
+        );
+        return textBlocks.map((b) => b.text).join("\n");
       }
-      return '(no response)';
+      return "(no response)";
     }
 
     // Check for error
-    const errorEvent = events.find(e => e.type === 'session.error' || e.type === 'error');
+    const errorEvent = events.find(
+      (e) => e.type === "session.error" || e.type === "error",
+    );
     if (errorEvent) {
       throw new Error(`Agent error: ${JSON.stringify(errorEvent)}`);
     }
@@ -166,18 +174,18 @@ async function pollForCompletion(sessionId, maxWaitMs = 600000) {
     // Log tool use progress
     const newEvents = events.slice(lastEventIndex);
     for (const evt of newEvents) {
-      if (evt.type === 'agent.tool_use' || evt.type === 'agent.mcp_tool_use') {
-        const toolName = evt.name || evt.tool_name || '?';
+      if (evt.type === "agent.tool_use" || evt.type === "agent.mcp_tool_use") {
+        const toolName = evt.name || evt.tool_name || "?";
         console.log(`  🔧 ${toolName}`);
       }
     }
     lastEventIndex = events.length;
 
     // Wait before polling again
-    await new Promise(r => setTimeout(r, 3000));
+    await new Promise((r) => setTimeout(r, 3000));
   }
 
-  throw new Error('Agent timed out after ' + (maxWaitMs / 1000) + 's');
+  throw new Error("Agent timed out after " + maxWaitMs / 1000 + "s");
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -188,17 +196,17 @@ async function runAgent(agentConfig) {
 
   try {
     // Create session
-    console.log('  יוצר session...');
+    console.log("  יוצר session...");
     const session = await createSession(agentConfig.id);
     console.log(`  session: ${session.id}`);
 
     // Send prompt
-    console.log('  שולח משימה...');
+    console.log("  שולח משימה...");
     const prompt = agentConfig.prompt(BUILDING_ID);
     await sendMessage(session.id, prompt);
 
     // Wait for completion
-    console.log('  מחכה לתשובה...');
+    console.log("  מחכה לתשובה...");
     const result = await pollForCompletion(session.id);
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -214,7 +222,7 @@ async function runAgent(agentConfig) {
 }
 
 async function main() {
-  console.log('=== הפעלת סוכנים מנוהלים ===');
+  console.log("=== הפעלת סוכנים מנוהלים ===");
   console.log(`בניין: ${BUILDING_ID}`);
   console.log(`תאריך: ${new Date().toISOString()}\n`);
 
@@ -227,18 +235,20 @@ async function main() {
   }
 
   // Summary
-  console.log('\n=== סיכום ===');
+  console.log("\n=== סיכום ===");
   for (const r of results) {
-    console.log(`  ${r.success ? '✓' : '✗'} ${r.name}: ${r.success ? 'הצליח' : r.error}`);
+    console.log(
+      `  ${r.success ? "✓" : "✗"} ${r.name}: ${r.success ? "הצליח" : r.error}`,
+    );
   }
 
-  const anyFailed = results.some(r => !r.success);
+  const anyFailed = results.some((r) => !r.success);
   if (anyFailed) {
-    console.error('\nחלק מהסוכנים נכשלו');
+    console.error("\nחלק מהסוכנים נכשלו");
     process.exit(1);
   }
 
-  console.log('\nכל הסוכנים הושלמו בהצלחה');
+  console.log("\nכל הסוכנים הושלמו בהצלחה");
 }
 
 main();

@@ -1,0 +1,535 @@
+<!doctype html>
+<html dir="rtl" lang="he">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MoneyMan</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: "Segoe UI", Arial, sans-serif;
+        background: #f0f2f5;
+        color: #1a1a2e;
+        min-height: 100vh;
+      }
+
+      header {
+        background: #1a1a2e;
+        color: white;
+        padding: 14px 24px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+      }
+      header h1 {
+        font-size: 1.3rem;
+        font-weight: 600;
+      }
+      .header-right {
+        margin-right: auto;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .status-pill {
+        font-size: 0.75rem;
+        padding: 3px 10px;
+        border-radius: 20px;
+        background: #333;
+        color: #aaa;
+        transition: all 0.3s;
+      }
+      .status-pill.running {
+        background: #2ed573;
+        color: #1a1a2e;
+        animation: pulse 1.5s infinite;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.6;
+        }
+      }
+
+      .container {
+        max-width: 820px;
+        margin: 24px auto;
+        padding: 0 16px 40px;
+      }
+
+      .card {
+        background: white;
+        border-radius: 14px;
+        padding: 22px;
+        margin-bottom: 18px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.07);
+      }
+      .card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 18px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid #f0f0f0;
+      }
+      .card-header h2 {
+        font-size: 1rem;
+        color: #444;
+        font-weight: 600;
+      }
+
+      /* Accounts */
+      .account-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 11px 14px;
+        background: #f8f9fa;
+        border-radius: 10px;
+        margin-bottom: 8px;
+        border: 1px solid #eee;
+      }
+      .account-left {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .bank-badge {
+        background: #1a1a2e;
+        color: white;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+      .account-creds {
+        color: #666;
+        font-size: 0.88rem;
+        direction: ltr;
+      }
+      .empty-state {
+        color: #bbb;
+        text-align: center;
+        padding: 24px 0;
+        font-size: 0.9rem;
+      }
+
+      /* Form */
+      .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+        margin-bottom: 14px;
+      }
+      .form-group {
+        margin-bottom: 14px;
+      }
+      label {
+        display: block;
+        font-size: 0.82rem;
+        color: #777;
+        margin-bottom: 5px;
+        font-weight: 500;
+      }
+      input,
+      select,
+      textarea {
+        width: 100%;
+        padding: 9px 12px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        font-size: 0.93rem;
+        font-family: inherit;
+        direction: ltr;
+        transition: border-color 0.2s;
+        background: white;
+      }
+      input:focus,
+      select:focus,
+      textarea:focus {
+        outline: none;
+        border-color: #1a1a2e;
+      }
+      textarea {
+        min-height: 90px;
+        resize: vertical;
+        font-size: 0.78rem;
+        font-family: monospace;
+      }
+
+      /* Buttons */
+      .btn {
+        border: none;
+        cursor: pointer;
+        border-radius: 8px;
+        padding: 8px 16px;
+        font-size: 0.88rem;
+        font-family: inherit;
+        font-weight: 500;
+        transition: opacity 0.15s;
+      }
+      .btn:hover {
+        opacity: 0.85;
+      }
+      .btn-dark {
+        background: #1a1a2e;
+        color: white;
+      }
+      .btn-danger {
+        background: #ff4757;
+        color: white;
+        padding: 5px 12px;
+        font-size: 0.82rem;
+      }
+      .btn-save {
+        background: #e8f5e9;
+        color: #2e7d32;
+      }
+      .btn-run {
+        width: 100%;
+        padding: 14px;
+        font-size: 1.05rem;
+        background: linear-gradient(135deg, #2ed573, #26c95a);
+        color: #1a1a2e;
+        border: none;
+        border-radius: 10px;
+        cursor: pointer;
+        font-weight: 700;
+        font-family: inherit;
+        transition:
+          opacity 0.2s,
+          transform 0.1s;
+        box-shadow: 0 3px 12px rgba(46, 213, 115, 0.35);
+      }
+      .btn-run:hover {
+        opacity: 0.9;
+        transform: translateY(-1px);
+      }
+      .btn-run:disabled {
+        background: #ccc;
+        box-shadow: none;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      /* Log */
+      .log-box {
+        background: #0d1117;
+        color: #c9d1d9;
+        font-family: "Consolas", monospace;
+        font-size: 0.8rem;
+        padding: 14px 16px;
+        border-radius: 10px;
+        height: 280px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+        direction: ltr;
+        margin-top: 14px;
+        line-height: 1.5;
+      }
+      .log-box .log-start {
+        color: #2ed573;
+        font-weight: bold;
+      }
+      .log-box .log-done {
+        color: #ffd700;
+        font-weight: bold;
+      }
+      .log-box .log-error {
+        color: #ff6b81;
+      }
+      .log-box .log-plain {
+        color: #c9d1d9;
+      }
+
+      /* Modal */
+      .modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        z-index: 200;
+        align-items: center;
+        justify-content: center;
+      }
+      .modal-overlay.open {
+        display: flex;
+      }
+      .modal {
+        background: white;
+        border-radius: 14px;
+        padding: 26px;
+        width: 420px;
+        max-width: 96vw;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      }
+      .modal h3 {
+        margin-bottom: 18px;
+        font-size: 1.05rem;
+        color: #1a1a2e;
+      }
+      .modal-actions {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        margin-top: 18px;
+      }
+      .modal-actions .btn-cancel {
+        background: #f0f0f0;
+        color: #555;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span style="font-size: 1.4rem">💰</span>
+      <h1>MoneyMan</h1>
+      <div class="header-right">
+        <span id="statusPill" class="status-pill">מוכן</span>
+      </div>
+    </header>
+
+    <div class="container">
+      <!-- Accounts -->
+      <div class="card">
+        <div class="card-header">
+          <h2>חשבונות בנק</h2>
+          <button class="btn btn-dark" onclick="openAddModal()">
+            + הוסף חשבון
+          </button>
+        </div>
+        <div id="accountsList"></div>
+      </div>
+
+      <!-- Google Sheets -->
+      <div class="card">
+        <div class="card-header">
+          <h2>Google Sheets</h2>
+          <button class="btn btn-save" onclick="saveSheets()">שמור</button>
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="margin-bottom: 0">
+            <label>מזהה הגיליון (Sheet ID)</label>
+            <input id="sheetId" placeholder="1H7-mNuUOva9zpN4Qm5..." />
+          </div>
+          <div class="form-group" style="margin-bottom: 0">
+            <label>שם הגיליון (Worksheet)</label>
+            <input id="worksheetName" placeholder="גיליון1" />
+          </div>
+        </div>
+        <div class="form-group" style="margin-top: 14px">
+          <label>Service Account Email</label>
+          <input
+            id="saEmail"
+            placeholder="xxx@project.iam.gserviceaccount.com"
+          />
+        </div>
+        <div class="form-group">
+          <label>Service Account Private Key</label>
+          <textarea
+            id="saKey"
+            placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"
+          ></textarea>
+        </div>
+      </div>
+
+      <!-- Run -->
+      <div class="card">
+        <div class="card-header">
+          <h2>הרצה</h2>
+        </div>
+        <button class="btn-run" id="runBtn" onclick="runScraper()">
+          ▶ הרץ סריקה עכשיו
+        </button>
+        <div class="log-box" id="logBox">
+          <span style="color: #555">ממתין להרצה...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Account Modal -->
+    <div class="modal-overlay" id="addModal">
+      <div class="modal">
+        <h3>הוסף חשבון בנק</h3>
+        <div class="form-group">
+          <label>בנק</label>
+          <select id="modalBank"></select>
+        </div>
+        <div class="form-group">
+          <label>שם משתמש</label>
+          <input id="modalUsername" placeholder="שם משתמש / מספר לקוח" />
+        </div>
+        <div class="form-group">
+          <label>סיסמא</label>
+          <input id="modalPassword" type="password" placeholder="סיסמא" />
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-cancel" onclick="closeModal()">ביטול</button>
+          <button class="btn btn-dark" onclick="confirmAddAccount()">
+            הוסף
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const BANKS = __BANKS_JSON__;
+      let config = { accounts: [], googleSheets: {} };
+      let es = null;
+
+      async function loadConfig() {
+        const r = await fetch("/api/config");
+        config = await r.json();
+        renderAccounts();
+        renderSheets();
+      }
+
+      function renderAccounts() {
+        const el = document.getElementById("accountsList");
+        if (!config.accounts || config.accounts.length === 0) {
+          el.innerHTML =
+            '<div class="empty-state">אין חשבונות מוגדרים. לחץ "הוסף חשבון".</div>';
+          return;
+        }
+        el.innerHTML = config.accounts
+          .map((a, i) => {
+            const bank = BANKS.find((b) => b.id === a.companyId);
+            const bankName = bank ? bank.name : a.companyId;
+            return `<div class="account-item">
+      <div class="account-left">
+        <span class="bank-badge">${bankName}</span>
+        <span class="account-creds">${a.username} &nbsp;/&nbsp; ••••••••</span>
+      </div>
+      <button class="btn btn-danger" onclick="deleteAccount(${i})">מחק</button>
+    </div>`;
+          })
+          .join("");
+      }
+
+      function renderSheets() {
+        const gs = config.googleSheets || {};
+        document.getElementById("sheetId").value = gs.sheetId || "";
+        document.getElementById("worksheetName").value = gs.worksheetName || "";
+        document.getElementById("saEmail").value = gs.serviceAccountEmail || "";
+        document.getElementById("saKey").value =
+          gs.serviceAccountPrivateKey || "";
+      }
+
+      async function saveConfig() {
+        await fetch("/api/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(config),
+        });
+      }
+
+      async function deleteAccount(i) {
+        if (!confirm("למחוק חשבון זה?")) return;
+        config.accounts.splice(i, 1);
+        await saveConfig();
+        renderAccounts();
+      }
+
+      async function saveSheets() {
+        config.googleSheets = {
+          sheetId: document.getElementById("sheetId").value.trim(),
+          worksheetName: document.getElementById("worksheetName").value.trim(),
+          serviceAccountEmail: document.getElementById("saEmail").value.trim(),
+          serviceAccountPrivateKey: document
+            .getElementById("saKey")
+            .value.trim(),
+        };
+        await saveConfig();
+        const btn = document.querySelector(".btn-save");
+        btn.textContent = "✓ נשמר";
+        setTimeout(() => (btn.textContent = "שמור"), 1500);
+      }
+
+      function openAddModal() {
+        const sel = document.getElementById("modalBank");
+        sel.innerHTML = BANKS.map(
+          (b) => `<option value="${b.id}">${b.name}</option>`,
+        ).join("");
+        document.getElementById("modalUsername").value = "";
+        document.getElementById("modalPassword").value = "";
+        document.getElementById("addModal").classList.add("open");
+        setTimeout(() => document.getElementById("modalUsername").focus(), 100);
+      }
+
+      function closeModal() {
+        document.getElementById("addModal").classList.remove("open");
+      }
+
+      async function confirmAddAccount() {
+        const companyId = document.getElementById("modalBank").value;
+        const username = document.getElementById("modalUsername").value.trim();
+        const password = document.getElementById("modalPassword").value;
+        if (!username || !password) {
+          alert("נא למלא שם משתמש וסיסמא");
+          return;
+        }
+        if (!config.accounts) config.accounts = [];
+        config.accounts.push({ companyId, username, password });
+        await saveConfig();
+        closeModal();
+        renderAccounts();
+      }
+
+      function runScraper() {
+        const logBox = document.getElementById("logBox");
+        const runBtn = document.getElementById("runBtn");
+        const pill = document.getElementById("statusPill");
+        logBox.innerHTML = "";
+        runBtn.disabled = true;
+        pill.textContent = "רץ...";
+        pill.className = "status-pill running";
+
+        fetch("/api/run", { method: "POST" });
+
+        if (es) es.close();
+        es = new EventSource("/api/logs");
+        es.onmessage = (e) => {
+          const msg = JSON.parse(e.data);
+          const line = document.createElement("div");
+          line.textContent = msg.text;
+          if (msg.type === "start") line.className = "log-start";
+          else if (msg.type === "done") {
+            line.className = "log-done";
+            runBtn.disabled = false;
+            pill.textContent = "הסתיים";
+            pill.className = "status-pill";
+            es.close();
+          } else if (msg.type === "error") {
+            line.className = "log-error";
+          } else {
+            line.className = "log-plain";
+          }
+          logBox.appendChild(line);
+          logBox.scrollTop = logBox.scrollHeight;
+        };
+        es.onerror = () => {
+          runBtn.disabled = false;
+          pill.textContent = "שגיאה";
+          pill.className = "status-pill";
+        };
+      }
+
+      // Close modal on overlay click
+      document.getElementById("addModal").addEventListener("click", (e) => {
+        if (e.target === e.currentTarget) closeModal();
+      });
+
+      loadConfig();
+    </script>
+  </body>
+</html>
