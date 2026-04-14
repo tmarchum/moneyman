@@ -664,7 +664,7 @@ async function runFinanceAnalysis(buildingId) {
   const year = new Date().getFullYear();
 
   const [expenses, payments, buildings] = await Promise.all([
-    supabaseGet('expenses', `building_id=eq.${buildingId}&select=amount,category,month,description`),
+    supabaseGet('expenses', `building_id=eq.${buildingId}&select=amount,category,date,description`),
     supabaseGet('payments', `building_id=eq.${buildingId}&select=amount,month`),
     supabaseGet('buildings', `id=eq.${buildingId}&select=name`),
   ]);
@@ -672,8 +672,9 @@ async function runFinanceAnalysis(buildingId) {
   // Group expenses by month
   const expByMonth = {};
   let totalExpenses = 0;
-  (expenses || []).filter(e => (e.month || '').startsWith(String(year))).forEach(e => {
-    const m = e.month;
+  (expenses || []).forEach(e => {
+    const m = (e.date || '').substring(0, 7); // "2026-04-01" → "2026-04"
+    if (!m || !m.startsWith(String(year))) return;
     if (!expByMonth[m]) expByMonth[m] = 0;
     expByMonth[m] += Number(e.amount) || 0;
     totalExpenses += Number(e.amount) || 0;
