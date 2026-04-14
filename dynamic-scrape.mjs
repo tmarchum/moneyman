@@ -179,15 +179,16 @@ async function pushTransactions(buildingId, transactions) {
   }).filter(r => r.transaction_date);
 
   // Check existing to avoid duplicates
+  // Use month+description+amount (not exact date) because value date can shift by 1 day
   const existing = await supabaseGet('bank_transactions',
-    `select=transaction_date,description,credit,debit&building_id=eq.${buildingId}`);
+    `select=month,description,credit,debit&building_id=eq.${buildingId}`);
 
   const existingSet = new Set(
-    (existing || []).map(e => `${e.transaction_date}|${e.description}|${e.credit}|${e.debit}`)
+    (existing || []).map(e => `${e.month}|${e.description}|${e.credit}|${e.debit}`)
   );
 
   const newRows = rows.filter(r =>
-    !existingSet.has(`${r.transaction_date}|${r.description}|${r.credit}|${r.debit}`)
+    !existingSet.has(`${r.month}|${r.description}|${r.credit}|${r.debit}`)
   );
 
   console.log(`  New: ${newRows.length}, Duplicates skipped: ${rows.length - newRows.length}`);
