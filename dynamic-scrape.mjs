@@ -775,22 +775,40 @@ async function runCollectionAnalysis(buildingId) {
       }
     }
 
-    if (unpaidMonths.length > 0) {
+    const diffDebt = diffMonths.reduce((s, d) => s + d.diff, 0);
+    const unpaidDebt = unpaidMonths.length * fee;
+    const debt = unpaidDebt + diffDebt;
+
+    if (unpaidMonths.length > 0 || diffMonths.length > 0) {
       // Real debt — create/update collection case
-      unitsWithDebt++;
-      const debt = unpaidMonths.length * fee;
+      if (unpaidMonths.length > 0) unitsWithDebt++;
+      if (diffMonths.length > 0) unitsWithDiff++;
       totalDebt += debt;
       const resName = resNames[unit.id] || "";
+      const diffStr =
+        diffMonths.length > 0
+          ? ` — הפרשים: ${diffMonths.map((d) => `${d.month} (שולם ${d.paid}₪, חסר ${d.diff}₪)`).join(", ")}`
+          : "";
+      const unpaidStr =
+        unpaidMonths.length > 0
+          ? ` — חודשים ללא תשלום: ${unpaidMonths.join(", ")}`
+          : "";
 
       const existingCase = caseMap[unit.id];
       const caseData = {
         building_id: buildingId,
         unit_id: unit.id,
+        unit_number: String(unit.number),
+        resident_name: resName,
         status: "open",
         escalation_level: existingCase?.escalation_level || "reminder",
         total_debt: debt,
-        months_overdue: unpaidMonths.length,
-        notes: `דירה ${unit.number} (${resName}): חוב ${debt}₪ — חודשים ללא תשלום: ${unpaidMonths.join(", ")}`,
+        months_overdue: unpaidMonths.length + diffMonths.length,
+        unpaid_months: [
+          ...unpaidMonths,
+          ...diffMonths.map((d) => d.month),
+        ],
+        notes: `דירה ${unit.number} (${resName}): חוב ${debt}₪${unpaidStr}${diffStr}`,
       };
 
       if (existingCase) {
@@ -823,8 +841,6 @@ async function runCollectionAnalysis(buildingId) {
       );
       casesClosed++;
     }
-
-    if (diffMonths.length > 0) unitsWithDiff++;
   }
 
   // Write summary alert
