@@ -796,8 +796,20 @@ async function runCollectionAnalysis(buildingId) {
         total_debt: debt,
         months_overdue: unpaidMonths.length + diffMonths.length,
         unpaid_months: [
-          ...unpaidMonths,
-          ...diffMonths.map((d) => d.month),
+          ...unpaidMonths.map((m) => ({
+            month: m,
+            type: "unpaid",
+            paid: 0,
+            expected: fee,
+            diff: fee,
+          })),
+          ...diffMonths.map((d) => ({
+            month: d.month,
+            type: "diff",
+            paid: d.paid,
+            expected: d.expected,
+            diff: d.diff,
+          })),
         ],
       };
 
