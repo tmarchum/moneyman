@@ -785,15 +785,6 @@ async function runCollectionAnalysis(buildingId) {
       if (diffMonths.length > 0) unitsWithDiff++;
       totalDebt += debt;
       const resName = resNames[unit.id] || "";
-      const diffStr =
-        diffMonths.length > 0
-          ? ` — הפרשים: ${diffMonths.map((d) => `${d.month} (שולם ${d.paid}₪, חסר ${d.diff}₪)`).join(", ")}`
-          : "";
-      const unpaidStr =
-        unpaidMonths.length > 0
-          ? ` — חודשים ללא תשלום: ${unpaidMonths.join(", ")}`
-          : "";
-
       const existingCase = caseMap[unit.id];
       const caseData = {
         building_id: buildingId,
@@ -808,7 +799,6 @@ async function runCollectionAnalysis(buildingId) {
           ...unpaidMonths,
           ...diffMonths.map((d) => d.month),
         ],
-        notes: `דירה ${unit.number} (${resName}): חוב ${debt}₪${unpaidStr}${diffStr}`,
       };
 
       if (existingCase) {
@@ -835,7 +825,9 @@ async function runCollectionAnalysis(buildingId) {
           headers: { ...headers, Prefer: "return=minimal" },
           body: JSON.stringify({
             status: "closed",
-            notes: "נסגר אוטומטית — כל החודשים שולמו",
+            total_debt: 0,
+            months_overdue: 0,
+            unpaid_months: [],
           }),
         },
       );
