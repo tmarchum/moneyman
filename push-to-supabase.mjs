@@ -64,6 +64,20 @@ if (transactions.length === 0) {
   process.exit(0);
 }
 
+// Resolve the building's active bank account so transactions are LINKED to it.
+// (Without this, scraped rows land with bank_account_id = NULL and are orphaned
+// from the account — they show up unlinked in per-account views.)
+const accounts = await supabaseGet(
+  "bank_accounts",
+  `select=id&building_id=eq.${BUILDING_ID}&is_active=eq.true&order=created_at.asc&limit=1`,
+);
+const bankAccountId = accounts?.[0]?.id || null;
+if (!bankAccountId) {
+  console.warn("WARNING: no active bank account for this building — rows will be unlinked");
+} else {
+  console.log(`Linking transactions to bank account ${bankAccountId}`);
+}
+
 // Convert moneyman format to vaad-chacham bank_transactions format
 // moneyman format: { type, date, processedDate, originalAmount, chargedAmount, description, memo, installments, status, uniqueId }
 const rows = transactions
@@ -74,6 +88,7 @@ const rows = transactions
 
     return {
       building_id: BUILDING_ID,
+      bank_account_id: bankAccountId,
       transaction_date: txDate,
       description: tx.description || "",
       credit: amount > 0 ? amount : 0,
