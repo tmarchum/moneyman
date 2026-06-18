@@ -89,6 +89,21 @@ async function fetchAccounts() {
   }
   console.log(`Found ${accounts.length} active bank account(s)`);
 
+  // Credentials now live in a service-role-only table (bank_account_secrets),
+  // not in bank_accounts — so the app / committee members can't read them.
+  // We use the service key here, so we can fetch them.
+  const secrets = await supabaseGet(
+    "bank_account_secrets",
+    "select=bank_account_id,credentials",
+  );
+  const secretsById = {};
+  for (const s of secrets || []) secretsById[s.bank_account_id] = s.credentials;
+  for (const acc of accounts) {
+    if (!acc.credentials || Object.keys(acc.credentials).length === 0) {
+      acc.credentials = secretsById[acc.id] || {};
+    }
+  }
+
   // Group by building_id
   const byBuilding = {};
   for (const acc of accounts) {
