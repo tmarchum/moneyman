@@ -47,48 +47,11 @@ const AGENTS = [
 סכם את הממצאים בסוף.
 `.trim(),
   },
-  {
-    id: "agent_011Ca2Lu1GK1Pmoj6rXwnBY7",
-    name: "מנהל גבייה",
-    prompt: (buildingId) => {
-      const now = new Date();
-      const year = now.getFullYear();
-      const currentMonth = `${year}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-      return `
-נהל את הגבייה של בניין ${buildingId}.
-
-1. קרא פרטי בניין עם get_building_info
-2. קרא דירות ודיירים עם get_units_and_residents
-3. קרא תשלומים עם get_payments
-4. קרא תיקי גבייה קיימים עם get_collection_cases
-
-5. לכל דירה, בדוק אם שילמה את כל החודשים מ-${year}-01 עד ${currentMonth}:
-   - חשב את התעריף לפי fee_tiers (by_rooms), board_member_discount
-   - אם יש חוב - בדוק אם כבר יש תיק גבייה פתוח
-
-6. עבור דירות עם חוב:
-   - אם אין תיק: צור תיק חדש עם upsert_collection_case (escalation_level: "reminder")
-   - אם יש תיק: בדוק אם צריך להסלים:
-     * reminder → warning (אחרי 7 ימים)
-     * warning → formal (אחרי 14 ימים)
-     * formal → legal (אחרי 30 ימים)
-   - אם צריך לשלוח מייל והדייר יש לו כתובת מייל, שלח עם send_email:
-     * תזכורת ידידותית / אזהרה / מכתב רשמי / התראה משפטית
-     * הכל בעברית, בשם ועד הבית
-     * כולל פירוט חודשים וסכום החוב
-
-7. עבור דירות ששילמו הכל:
-   - אם יש תיק פתוח, סגור אותו (status: "closed", auto_closed: true)
-
-8. צור התראות לועד עם write_alerts (agent_type: "collection"):
-   - סיכום מצב גבייה
-   - הסלמות חדשות
-   - תיקים שנסגרו
-
-סכם את הפעולות שביצעת.
-`.trim();
-    },
-  },
+  // ── DISABLED: "מנהל גבייה" (Collection Manager, agent_011Ca2Lu1GK1Pmoj6rXwnBY7).
+  // This agent auto-sent dunning emails to residents. Per the building's explicit
+  // "do not send" setting it must not run. Emails are also blocked fail-closed at
+  // send-notification + mcp-proxy, but disabling the agent here removes the source
+  // entirely. Re-add the entry only if automatic collection emails are wanted again.
 ];
 
 const ENV_ID = "env_01LMDFfVfgEKUFSYBUBVof9a";
