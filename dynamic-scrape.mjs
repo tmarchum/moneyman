@@ -171,7 +171,10 @@ function runMoneyman(buildingId, accounts) {
           (l) =>
             l.includes("transactions") ||
             l.includes("accounts") ||
-            l.includes("✔"),
+            l.includes("✔") ||
+            // Surface failures too — a bank-side error used to vanish here,
+            // leaving only "No transaction files generated" with no cause.
+            /error|failed|✗|❌|Exception|timeout/i.test(l),
         )
         .join("\n"),
     );
