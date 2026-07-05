@@ -1,43 +1,41 @@
+// Local moneyman runner — loads ALL secrets from .env.local (gitignored).
+// No credentials may appear in this file: it is committed to a PUBLIC repo.
 import { spawn } from "child_process";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
-process.env.MONEYMAN_CONFIG = JSON.stringify({
-  accounts: [{ companyId: "pagi", username: "I652LRB", password: "Tm256914" }],
-});
-process.env.MONEYMAN_UNSAFE_STDOUT = "true";
-process.env.TZ = "Asia/Jerusalem";
-process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL =
-  "moneyman@moneyman-488313.iam.gserviceaccount.com";
-process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
-MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQC5DtCYzIzhI0H5
-stHoipIZjKvEmxHcJGaEiXpmfLUsbAQ+jh2L10kQq12nxIFo1Dt3QI4kAKk024Sc
-Lrz/g6z6cBFchd/z5AHkOMGGY8kkhFSkMRpczdgmrtfTKfFS36+p85oFC09eoGX0
-PMoB1cHTAk/pKOfqRtvuvmr+tSFPgTkxXMPpg69kyCYJN3HjP6QwQhYK4dgXiQ+t
-LEdqYYaJFi6WTieq93ytCG9zNW0CBQSY5PMuqNq/iy7+aierRFX6Zo05+AEIIofu
-k4cXawSvZcTb52wrzdk0XMqOcy3lJhi+fH9pjOx5lk25vxOfaQ9/zg1Se9cPPAMq
-UeUfv0GNAgMBAAECggEAQCNMVMkAQr9vjFVXvxrXzBcfKUL9i6jqByGG1KKAQGcn
-iW7D+sWgwzBBg3XtzCFSguBS41N/UZyLd34TbxN6DkptGf4kQmlR5oFtQWCwRAHB
-PC7wjh2hvrZ2gu9Ufn6caXDOftUOqyM4cs/my4AEb1erzomo51+rtjE08BZi9ySg
-a1gM0itIUVrK/Pr2YNp3G4InHUPr82xuZ0ieY3CzEvqsfFYkK0OKUmtK/cBGZolV
-BWtTFG+vagyj5Xho5UNZ1L88TgxuIXnyOk9jZPzpnMiOsYWtKE/OU5RLn2Kx6TmQ
-y1ykNC+jXRj+ROtWLFSuTH9rGPAAV7IVU45e5ldDWQKBgQD1uruWxBVlFo6pdx+S
-xM30515F3QaRR3ivqO0LlERmntFVgrWaJel5LBLXFINLtK0CVeKWp5PEv6pT0hdM
-p82r0J2Eyjzm497loHAo8MOGF6FrIzDgZxfgTjy7A6Bfr+rWO9UwvpbW9rOGhPvM
-AZtZ5XkKCiru5qUkhepDZ8Z2EwKBgQDAyufdE9j4226z0lYMHPgqbWo4GbcycWMD
-TtjD6q58oWsyTj2vBcplFbxB0paVRGulrT3o2V8c4KiA/BUFXz+VlQBnnQH991yA
-D/OPsTYbDfLKigax1y8InfbGOC8Y0fGMy6u1LPsAyaN3l3maWKM8F7tU7C2MQvrw
-4c9zgFDd3wKBgF6P0YifRKx2FchZMylD2w4Xy0uPVuupWWQf2bjPAdOL4nrJpiD/
-3eznbQifuDb1/G4dpuja7B6Ws3E2NAknuhoYWcW0HeOsZSZwqzjWDigYB+I21KRG
-iAWllfFR3/FyvShcNhpf/aQTo9psaomDRMk/aWjXqNXupDZ94jy2PsVJAoGAPj0C
-zz8KC4SjX0/m0XBEuUWrRcMffhxWr4mztsO7YqaluY7CoQ8IgMucg89dJ4D4E3sz
-AkmyR9tK6qD2lE5kc4CvqcNpEjjZ1snPgjLeWauOFs6qTJ1AJNMCCIm4wpV8Gkzh
-+NI1kdKGgCQZcLduswaiRk8cgSxaYIs1cn8ZHBcCgYA5jVhPm2WRKLJD4Fq9gfxc
-CXMeRU8uKRCtse2aeOAcSNjlPokcfD6ht5lga34maiAXC63G0yhd0EsXzq27lCMj
-aQZteYxUfZAcG9Adh3ZoUrkeqhOtwycXX6/PnUq4plrl+avjiisgU+RLtfGpx6Sz
-vFzlQkUXgt4U2NuiJ763NA==
------END PRIVATE KEY-----`;
-process.env.GOOGLE_SHEET_ID = "1H7-mNuUOva9zpN4Qm5SlWn9cLnVnHL4q4FOkOINyEPg";
-process.env.GOOGLE_WORKSHEET_NAME = "גיליון1";
-process.env.DEBUG = "moneyman:*";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const envFile = path.join(__dirname, ".env.local");
+
+if (!fs.existsSync(envFile)) {
+  console.error("ERROR: .env.local not found. Create it with MONEYMAN_CONFIG, GOOGLE_* etc.");
+  process.exit(1);
+}
+
+// Minimal .env parser (supports multi-line quoted values like private keys)
+const raw = fs.readFileSync(envFile, "utf8");
+const lines = raw.split("\n");
+for (let i = 0; i < lines.length; i++) {
+  const line = lines[i];
+  const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
+  if (!m) continue;
+  let [, key, val] = m;
+  // Multi-line value wrapped in double quotes or backticks
+  if ((val.startsWith('"') && !val.endsWith('"')) || (val.startsWith("`") && !val.endsWith("`"))) {
+    const quote = val[0];
+    val = val.slice(1);
+    while (++i < lines.length && !lines[i].endsWith(quote)) val += "\n" + lines[i];
+    if (i < lines.length) val += "\n" + lines[i].slice(0, -1);
+  } else if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("`") && val.endsWith("`"))) {
+    val = val.slice(1, -1);
+  }
+  // PEM keys are often stored single-line with \n escapes — restore real newlines
+  if (key.includes("PRIVATE_KEY") && val.includes("\\n")) val = val.replace(/\\n/g, "\n");
+  if (!(key in process.env)) process.env[key] = val;
+}
+
+process.env.TZ = process.env.TZ || "Asia/Jerusalem";
 
 const p = spawn("node", ["dst/index.js"], {
   env: process.env,
