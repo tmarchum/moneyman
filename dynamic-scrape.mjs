@@ -134,6 +134,21 @@ function runMoneyman(buildingId, accounts) {
     },
   };
 
+  // Also export to Google Sheets when configured (replaces the old local-PC
+  // runner — the sheet feed now lives in the cloud alongside the Supabase feed).
+  if (
+    process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY &&
+    process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL &&
+    process.env.GOOGLE_SHEET_ID
+  ) {
+    config.storage.googleSheets = {
+      serviceAccountPrivateKey: process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
+      serviceAccountEmail: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+      sheetId: process.env.GOOGLE_SHEET_ID,
+      worksheetName: process.env.GOOGLE_WORKSHEET_NAME || "גיליון1",
+    };
+  }
+
   const configJson = JSON.stringify(config);
   const label = accounts.map((a) => a.label || a.bank_type).join(", ");
   console.log(`\n  Running moneyman for [${label}]...`);
