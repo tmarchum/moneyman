@@ -161,7 +161,10 @@ function runMoneyman(buildingId, accounts) {
         `-e DEBUG=moneyman:* ` +
         `-e TZ=Asia/Jerusalem ` +
         `-e MONEYMAN_UNSAFE_STDOUT=true ` +
-        `ghcr.io/daniel-hauser/moneyman:latest`,
+        // 2>&1: moneyman's DEBUG logs (including login/scrape errors) go to
+        // stderr, which execSync drops on a zero exit code — merge them into
+        // stdout so the error filter below can surface them.
+        `ghcr.io/daniel-hauser/moneyman:latest 2>&1`,
       { encoding: "utf8", timeout: 300000, stdio: ["pipe", "pipe", "pipe"] },
     );
     console.log(
